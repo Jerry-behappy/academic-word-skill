@@ -1,0 +1,4 @@
+interface:
+  display_name: "Academic-word"
+  short_description: "学术Word文档编辑、原生编号交叉引用、MathType保留与排版核验"
+  default_prompt: "使用$academic-word处理这份学术Word文档，保留我的手动修改，输出新版本并核验编号、公式和排版。"
