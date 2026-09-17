@@ -1,0 +1,135 @@
+# Academic-word
+
+面向中文学位论文、开题报告和学术稿件的Codex技能，配套可复用的DOCX处理脚本。适用于文字润色、参考文献自动编号、题注与交叉引用、MathType对象保留，以及通过Microsoft Word进行排版核验。
+
+核心原则是：**以用户最新保存的文档为底稿，保留手动修改，不覆盖原稿，另存新版本。** 本项目不是独立的Word插件，也不承诺自动完成任意文档的全部排版。
+
+## 主要功能
+
+- **学术文字处理**：润色和适度扩写，检查研究内容与技术路线等章节的一致性，不虚构实验、数据或参考文献。
+- **参考文献与正文引用**：将符合条件的手打`[n]`转换为Word原生编号列表，以书签和`REF`域建立可更新的交叉引用。
+- **题注与图号引用**：处理符合条件的原生`SEQ`题注，正文引用仅包含标签和编号；移动引导句时保留引用域。
+- **公式与图件保护**：保留已有MathType可编辑OLE对象、图片和有关域，比较嵌入文件的哈希值，检查意外变化。
+- **中文学术排版**：按需采用中英文间距、题注字体、真实空行、连续公式编号等偏好；这些不是强制适用于所有学校的格式规则。
+- **Word核验**：通过独立Word COM实例选择性更新域、另存DOCX和导出PDF，再逐页检查公式、题注、表格和分页。
+
+## 安装与调用
+
+### 安装技能
+
+本仓库为私有仓库，下载或克隆需要相应的GitHub访问权限。下面的PowerShell示例需要已安装Git和GitHub CLI，并已通过`gh auth login`登录。
+
+根据[Codex技能官方文档](https://learn.chatgpt.com/zh-Hans/docs/build-skills)，用户级技能可放在`$HOME/.agents/skills`，项目级技能可放在项目的`.agents/skills`中。以下示例安装到用户级目录，并拒绝覆盖已有安装。
+
+```powershell
+$skillRoot = Join-Path $env:USERPROFILE '.agents\skills'
+$skillPath = Join-Path $skillRoot 'academic-word'
+if (Test-Path -LiteralPath $skillPath) {
+    throw '目标目录已存在，请先检查已有技能，不要覆盖或重复安装。'
+}
+New-Item -ItemType Directory -Path $skillRoot -Force | Out-Null
+gh repo clone Jerry-behappy/academic-word $skillPath
+```
+
+本技能也已在使用`.codex/skills`目录的本地环境中使用。已有安装应沿用当前环境实际识别的目录，不要在两处重复安装同名技能。安装后若未出现，可重启Codex并检查技能列表。
+
+### 在对话中使用
+
+提供文档的实际路径和具体修改范围，例如：
+
+```text
+$academic-word
+以“D:\论文\开题报告.docx”为底稿，润色研究方法与技术路线。
+保留我的手动修改、MathType公式和原有交叉引用，另存新版本，
+并核验编号和排版，不覆盖原稿。
+```
+
+如果只需要文字建议，可以明确说明：
+
+```text
+$academic-word
+只润色下面这段文字，暂不修改Word，不新增实验内容或性能指标。
+```
+
+运行前请先保存需要作为底稿的文件。技能不会擅自保存或关闭用户正在使用的Word文档。
+
+## 环境依赖
+
+| 用途 | 依赖 |
+| --- | --- |
+| DOCX结构检查与修改 | Python、`lxml` |
+| 离线回归测试 | 额外需要`python-docx` |
+| PDF转页面图片 | `pdf2image`、Pillow，以及单独安装的Poppler |
+| Word COM更新、另存与导出 | Windows、PowerShell、已安装的Microsoft Word桌面版 |
+| 编辑或转换MathType公式 | 可用的MathType安装及经过验证的插件或API流程，不由现有脚本自动提供 |
+
+优先使用当前环境已有的运行时；缺少Python依赖时，可在自建虚拟环境中安装：
+
+```powershell
+python -m pip install lxml python-docx pdf2image Pillow
+```
+
+Poppler不是上述pip命令的一部分。渲染前需确保`pdfinfo`和`pdftoppm`可以从命令行调用。
+
+## 目录与脚本
+
+| 文件 | 说明 |
+| --- | --- |
+| [SKILL.md](SKILL.md) | 技能入口、处理原则和交付要求 |
+| [agents/openai.yaml](agents/openai.yaml) | 技能显示名称及默认调用提示 |
+| [references/word-mechanics.md](references/word-mechanics.md) | Word编号、交叉引用、脚本命令和支持边界 |
+| [references/chinese-format-profile.md](references/chinese-format-profile.md) | 可按需采用的中文学术排版偏好 |
+| [scripts/docx_ops.py](scripts/docx_ops.py) | 检查、编号转换、题注处理、格式规范化、保留域的句子移动、对象审计 |
+| [scripts/word_finalize.ps1](scripts/word_finalize.ps1) | Word COM选择性更新域、另存文档、导出PDF及编号核验 |
+| [scripts/render_pdf.py](scripts/render_pdf.py) | 将已有PDF输出为逐页PNG、总览图和页面清单 |
+| [scripts/test_docx_ops.py](scripts/test_docx_ops.py) | 离线结构与安全边界回归测试 |
+| [scripts/test_word_fields.ps1](scripts/test_word_fields.ps1) | 临时Word文档中的原生编号与交叉引用测试 |
+
+## 手动运行示例
+
+以下命令在仓库根目录运行。`source.docx`是占位文件名，需替换为实际底稿；先阅读[脚本使用说明](references/word-mechanics.md)，不要直接对不符合条件的文档执行转换。
+
+### 检查文档
+
+```powershell
+New-Item -ItemType Directory -Path qa -Force | Out-Null
+python scripts/docx_ops.py inspect source.docx --report qa/source.json
+```
+
+### 转换符合条件的手打参考文献
+
+```powershell
+python scripts/docx_ops.py bibliography source.docx --output qa/numbered.docx --report qa/conversion.json
+powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/numbered.docx -OutputPath final.docx -PdfPath qa/final.pdf -ReportPath qa/fields.json -UpdateBibliography
+python scripts/docx_ops.py audit-assets source.docx --compare final.docx
+python scripts/render_pdf.py qa/final.pdf qa/pages
+```
+
+流程为：结构转换 → Word更新并另存 → 图片与嵌入对象审计 → 页面渲染与人工检查。输出文件必须使用尚不存在的新路径；重复运行时应更换输出名称，`qa/pages`也必须是尚不存在的目录。
+
+### 只导出PDF，不修改文档或更新域
+
+```powershell
+powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath qa/source.pdf
+```
+
+题注处理、保留域的句子移动及可选格式规范化，请参阅[详细说明](references/word-mechanics.md)，或运行`python scripts/docx_ops.py --help`。
+
+## 测试
+
+```powershell
+python -m unittest discover -s scripts -p "test_*.py" -v
+powershell -NoProfile -File scripts/test_word_fields.ps1
+```
+
+第一项是离线回归测试；第二项需要Windows和Microsoft Word，使用临时文档核对列表编号和引用更新。测试通过不等于具体论文已完成科学内容核验或逐页排版检查。
+
+## 使用边界与注意事项
+
+- **保留MathType不等于自动转换MathType。** Word原生OMML公式也不是MathType对象；需要转换时，应先在副本上验证可用的MathType流程。
+- `bibliography`要求一个匹配的参考文献标题，后面紧接连续手打`[1]`至`[N]`的条目。已有自动编号、相关书签、修订记录或文献管理软件的ADDIN域等情况会触发保护检查。它不能自动区分文献引用与数学区间中的方括号数字，也不会自动按首次引用顺序重排文献。
+- `figures`只处理尚未建立题注书签的简单原生`SEQ 图`题注，不负责将所有手打题注自动转换，也不判断图文含义是否对应。
+- 不通过全局F9、批量解锁或将域转成普通文字来强行更新。Word COM脚本只处理选定范围内支持的域，不更新或解锁MathType、Zotero、EndNote管理的域。
+- 当前检查和更新主要面向正文；页眉、页脚、文本框及复杂表格可能需要专门处理。段内公式周围的空格、公式编号和局部字体也可能需要定点修改。
+- 图件和嵌入对象哈希值一致只能证明这些文件未变，不能证明排版正确。最终仍需逐页检查内容遮挡、跨页边框、公式清晰度和引用显示。
+- 该仓库只存放技能和通用脚本。处理具体文档时，请将论文、测试数据、导出的页面及其他敏感材料留在自己的工作目录，不要误提交到仓库。
