@@ -10,11 +10,15 @@ param(
     [string]$PdfPath,
     [string]$ReportPath,
     [switch]$UpdateBibliography,
-    [switch]$UpdateFigures
+    [switch]$UpdateFigures,
+    [ValidateRange(1,1638)][double]$FigureReferenceSize
 )
 $ErrorActionPreference = 'Stop'
 $taskInput = (Resolve-Path -LiteralPath $InputPath).Path
-$taskHashBefore = (Get-FileHash -LiteralPath $taskInput -Algorithm SHA256).Hash
+$taskBytesBefore = [IO.File]::ReadAllBytes($taskInput)
+if ($PSBoundParameters.ContainsKey('FigureReferenceSize') -and -not $UpdateFigures) {
+    throw 'FigureReferenceSize requires UpdateFigures.'
+}
 if (($UpdateBibliography -or $UpdateFigures) -and -not $OutputPath) {
     throw 'Field updates require a new OutputPath; input is never saved.'
 }
@@ -33,14 +37,14 @@ foreach ($taskTarget in @($OutputPath, $PdfPath, $ReportPath)) {
 }
 $taskWord = $null
 $taskDoc = $null
-$taskReport = [ordered]@{source=$taskInput; source_sha256=$taskHashBefore; sequences=0; references=@(); numbered_references=@()}
+$taskReport = [ordered]@{source=$taskInput; sequences=0; references=@(); numbered_references=@()}
 try {
     $taskWord = New-Object -ComObject Word.Application
     $taskWord.Visible = $false
     $taskWord.DisplayAlerts = 0
     $taskWord.AutomationSecurity = 3
     # Open read-only. SaveAs creates a separate deliverable without touching the input.
-    $taskDoc = $taskWord.Documents.Open($taskInput, $false, $true, $false)
+    $taskDoc = $taskWord.Documents.Open([string]$taskInput, $false, $true, $false)
     if ($taskDoc.Revisions.Count -gt 0 -and ($UpdateBibliography -or $UpdateFigures)) {
         throw 'Tracked revisions present; obtain disposition first.'
     }
@@ -66,11 +70,27 @@ try {
     }
     foreach ($taskField in $taskDoc.Fields) {
         $taskCode = $taskField.Code.Text.Trim()
-        $taskIsBib = $UpdateBibliography -and $taskCode -match '^REF\s+(AWBib\d+)\s'
-        $taskIsFig = $UpdateFigures -and $taskCode -match '^REF\s+(AWFig\d+|_RefFig\d+)\s'
+        $taskRefMatch = [regex]::Match($taskCode, '^REF\s+(\S+)(?:\s|$)')
+        if (-not $taskRefMatch.Success) { continue }
+        $taskBookmarkName = $taskRefMatch.Groups[1].Value
+        $taskIsBib = $UpdateBibliography -and $taskBookmarkName -match '^AWBib\d+$'
+        $taskIsFig = $false
+        if ($UpdateFigures) {
+            # Word-generated and user-named caption bookmarks need not use _RefFig.
+            if ($taskDoc.Bookmarks.Exists($taskBookmarkName)) {
+                $taskTargetRange = $taskDoc.Bookmarks.Item($taskBookmarkName).Range
+                foreach ($taskTargetField in $taskTargetRange.Fields) {
+                    if ($taskTargetField.Code.Text.Trim() -match '^SEQ\s+(图|表)(?:\s|$)') {
+                        $taskIsFig = $true
+                        break
+                    }
+                }
+            } elseif ($taskBookmarkName -match '^(AWFig\d+|_RefFig\d+)$') {
+                throw "Missing caption bookmark: $taskBookmarkName"
+            }
+        }
         if (-not ($taskIsBib -or $taskIsFig)) { continue }
         if ($taskField.Locked) { throw "Requested field locked: $taskCode" }
-        $taskBookmarkName = [regex]::Match($taskCode, '^REF\s+(\S+)').Groups[1].Value
         if (-not $taskDoc.Bookmarks.Exists($taskBookmarkName)) { throw "Missing bookmark: $taskBookmarkName" }
         [void]$taskField.Update()
         $taskResult = $taskField.Result.Text
@@ -79,7 +99,10 @@ try {
             if ($taskCode -match '\\#\s+"0"') { $taskExpected = $taskExpected.Trim('[', ']') }
         } else {
             $taskExpected = $taskDoc.Bookmarks.Item($taskBookmarkName).Range.Text
-            if ($taskExpected -notmatch '^(图|表)\d+$') { throw "Caption bookmark is not label and number only: $taskExpected" }
+            if ($taskExpected -notmatch '^(图|表) ?\d+$') { throw "Caption bookmark is not label and number only: $taskExpected" }
+            if ($PSBoundParameters.ContainsKey('FigureReferenceSize')) {
+                $taskField.Result.Font.Size = $FigureReferenceSize
+            }
         }
         if ($taskResult -ne $taskExpected) { throw "Field result mismatch: $taskCode => $taskResult; expected $taskExpected" }
         $taskReport.references += @{code=$taskCode; result=$taskResult}
@@ -88,12 +111,12 @@ try {
     $taskReport.pages = $taskDoc.ComputeStatistics(2)
     if ($OutputPath) {
         $taskOutput = [IO.Path]::GetFullPath($OutputPath)
-        $taskDoc.SaveAs2($taskOutput, 16)
+        $taskDoc.SaveAs2([string]$taskOutput, 16)
         $taskReport.output = $taskOutput
     }
     if ($PdfPath) {
         $taskPdf = [IO.Path]::GetFullPath($PdfPath)
-        $taskDoc.ExportAsFixedFormat($taskPdf, 17)
+        $taskDoc.ExportAsFixedFormat([string]$taskPdf, 17)
         $taskReport.pdf = $taskPdf
     }
 } finally {
@@ -108,7 +131,9 @@ try {
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
 }
-if ((Get-FileHash -LiteralPath $taskInput -Algorithm SHA256).Hash -ne $taskHashBefore) { throw 'Input changed during processing; do not deliver without reconciling.' }
+if (-not [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals($taskBytesBefore, [IO.File]::ReadAllBytes($taskInput))) {
+    throw 'Input changed during processing; do not deliver without reconciling.'
+}
 $taskReport.input_unchanged = $true
 $taskJson = $taskReport | ConvertTo-Json -Depth 6
 if ($ReportPath) { $taskJson | Set-Content -LiteralPath $ReportPath -Encoding UTF8 }

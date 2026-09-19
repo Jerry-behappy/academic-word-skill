@@ -1,17 +1,20 @@
-# Academic-word
+# academic-word-skill
 
 面向中文学位论文、开题报告和学术稿件的Codex技能，配套可复用的DOCX处理脚本。适用于文字润色、参考文献自动编号、题注与交叉引用、MathType对象保留，以及通过Microsoft Word进行排版核验。
 
 核心原则是：**以用户最新保存的文档为底稿，保留手动修改，不覆盖原稿，另存新版本。** 本项目不是独立的Word插件，也不承诺自动完成任意文档的全部排版。
+
+GitHub仓库名为`academic-word-skill`，技能调用名仍为`$academic-word`，本地技能目录保持`academic-word`。仓库重命名不需要重装或改变现有调用方式。
 
 ## 主要功能
 
 - **学术文字处理**：润色和适度扩写，检查研究内容与技术路线等章节的一致性，不虚构实验、数据或参考文献。
 - **参考文献与正文引用**：将符合条件的手打`[n]`转换为Word原生编号列表，以书签和`REF`域建立可更新的交叉引用。
 - **题注与图号引用**：处理符合条件的原生`SEQ`题注，正文引用仅包含标签和编号；移动引导句时保留引用域。
-- **公式与图件保护**：保留已有MathType可编辑OLE对象、图片和有关域，比较嵌入文件的哈希值，检查意外变化。
+- **公式与图件保护**：保留已有MathType可编辑OLE对象、图片和有关域，以字节内容及数量比较检查意外变化，保留公式基线与尺寸。
 - **中文学术排版**：按需采用中英文间距、题注字体、真实空行、连续公式编号等偏好；这些不是强制适用于所有学校的格式规则。
-- **Word核验**：通过独立Word COM实例选择性更新域、另存DOCX和导出PDF，再逐页检查公式、题注、表格和分页。
+- **流程图修订**：检查节点间距、箭头末段、回路和画布边缘；在Word中检查图题同页及表格内分页，不靠缩小整图解决拥挤。
+- **Word核验**：通过独立Word COM实例选择性更新域、另存DOCX和导出PDF，按影响范围检查公式、题注、表格和分页。
 
 ## 安装与调用
 
@@ -28,7 +31,7 @@ if (Test-Path -LiteralPath $skillPath) {
     throw '目标目录已存在，请先检查已有技能，不要覆盖或重复安装。'
 }
 New-Item -ItemType Directory -Path $skillRoot -Force | Out-Null
-gh repo clone Jerry-behappy/academic-word $skillPath
+gh repo clone Jerry-behappy/academic-word-skill $skillPath
 ```
 
 本技能也已在使用`.codex/skills`目录的本地环境中使用。已有安装应沿用当前环境实际识别的目录，不要在两处重复安装同名技能。安装后若未出现，可重启Codex并检查技能列表。
@@ -60,7 +63,7 @@ $academic-word
 | DOCX结构检查与修改 | Python、`lxml` |
 | 离线回归测试 | 额外需要`python-docx` |
 | PDF转页面图片 | `pdf2image`、Pillow，以及单独安装的Poppler |
-| Word COM更新、另存与导出 | Windows、PowerShell、已安装的Microsoft Word桌面版 |
+| Word COM更新、另存与导出 | Windows、PowerShell 7（推荐）、已安装的Microsoft Word桌面版 |
 | 编辑或转换MathType公式 | 可用的MathType安装及经过验证的插件或API流程，不由现有脚本自动提供 |
 
 优先使用当前环境已有的运行时；缺少Python依赖时，可在自建虚拟环境中安装：
@@ -79,6 +82,7 @@ Poppler不是上述pip命令的一部分。渲染前需确保`pdfinfo`和`pdftop
 | [agents/openai.yaml](agents/openai.yaml) | 技能显示名称及默认调用提示 |
 | [references/word-mechanics.md](references/word-mechanics.md) | Word编号、交叉引用、脚本命令和支持边界 |
 | [references/chinese-format-profile.md](references/chinese-format-profile.md) | 可按需采用的中文学术排版偏好 |
+| [references/flowcharts.md](references/flowcharts.md) | 流程图箭头、间距、算法一致性和Word内分页检查 |
 | [scripts/docx_ops.py](scripts/docx_ops.py) | 检查、编号转换、题注处理、格式规范化、保留域的句子移动、对象审计 |
 | [scripts/word_finalize.ps1](scripts/word_finalize.ps1) | Word COM选择性更新域、另存文档、导出PDF及编号核验 |
 | [scripts/render_pdf.py](scripts/render_pdf.py) | 将已有PDF输出为逐页PNG、总览图和页面清单 |
@@ -100,7 +104,7 @@ python scripts/docx_ops.py inspect source.docx --report qa/source.json
 
 ```powershell
 python scripts/docx_ops.py bibliography source.docx --output qa/numbered.docx --report qa/conversion.json
-powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/numbered.docx -OutputPath final.docx -PdfPath qa/final.pdf -ReportPath qa/fields.json -UpdateBibliography
+pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/numbered.docx -OutputPath final.docx -PdfPath qa/final.pdf -ReportPath qa/fields.json -UpdateBibliography
 python scripts/docx_ops.py audit-assets source.docx --compare final.docx
 python scripts/render_pdf.py qa/final.pdf qa/pages
 ```
@@ -110,19 +114,30 @@ python scripts/render_pdf.py qa/final.pdf qa/pages
 ### 只导出PDF，不修改文档或更新域
 
 ```powershell
-powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath qa/source.pdf
+pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath qa/source.pdf
 ```
 
-题注处理、保留域的句子移动及可选格式规范化，请参阅[详细说明](references/word-mechanics.md)，或运行`python scripts/docx_ops.py --help`。
+### 图题注与引用
+
+当前保存的个人偏好为`图 1 题注文字`，四号（14 pt）、中文宋体、英文及数字Times New Roman；正文仅引用`图 1`，字号跟随正文。用户最新要求或学校模板优先。
+
+```powershell
+python scripts/docx_ops.py figures source.docx --output qa/captions.docx --caption-size 14
+pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/captions.docx -OutputPath captions-final.docx -UpdateFigures
+```
+
+上述转换仅适用于尚无题注书签的简单原生SEQ题注。已有有效书签时不要重建，采用定点修改。`--label-separator none`可按需取消标签与编号之间的空格；`-FigureReferenceSize 12`仅在适用正文统一为12 pt时设置引用字号，否则逐处匹配。
+
+保留域的句子移动及可选格式规范化，请参阅[详细说明](references/word-mechanics.md)，或运行`python scripts/docx_ops.py --help`。
 
 ## 测试
 
 ```powershell
 python -m unittest discover -s scripts -p "test_*.py" -v
-powershell -NoProfile -File scripts/test_word_fields.ps1
+pwsh -NoProfile -File scripts/test_word_fields.ps1
 ```
 
-第一项是离线回归测试；第二项需要Windows和Microsoft Word，使用临时文档核对列表编号和引用更新。测试通过不等于具体论文已完成科学内容核验或逐页排版检查。
+第一项是离线回归测试；第二项需要Windows和Microsoft Word，使用新建的合成文档核对列表编号、任意命名题注书签的引用更新、正文引用字号和锁定公式编号域保护。测试文件存放在新建的临时目录，也可用`-OutputDirectory`指定尚不存在的目录。测试通过不等于具体论文已完成科学内容核验或排版检查，也不等于测试了MathType插件内部编辑。
 
 ## 使用边界与注意事项
 
@@ -131,5 +146,6 @@ powershell -NoProfile -File scripts/test_word_fields.ps1
 - `figures`只处理尚未建立题注书签的简单原生`SEQ 图`题注，不负责将所有手打题注自动转换，也不判断图文含义是否对应。
 - 不通过全局F9、批量解锁或将域转成普通文字来强行更新。Word COM脚本只处理选定范围内支持的域，不更新或解锁MathType、Zotero、EndNote管理的域。
 - 当前检查和更新主要面向正文；页眉、页脚、文本框及复杂表格可能需要专门处理。段内公式周围的空格、公式编号和局部字体也可能需要定点修改。
-- 图件和嵌入对象哈希值一致只能证明这些文件未变，不能证明排版正确。最终仍需逐页检查内容遮挡、跨页边框、公式清晰度和引用显示。
+- 图件和嵌入对象内容一致只能证明这些载荷未变，不能证明位置和排版正确。最终仍需检查受影响页面的内容遮挡、跨页边框、公式清晰度和引用显示。
+- 文献原方法与项目调整应分开描述。例如直接在dBm数值上计算STD是具体项目选择，不应冒充线性功率STD的等价复现，也不是技能的全局默认算法。
 - 该仓库只存放技能和通用脚本。处理具体文档时，请将论文、测试数据、导出的页面及其他敏感材料留在自己的工作目录，不要误提交到仓库。

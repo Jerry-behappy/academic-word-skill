@@ -26,20 +26,26 @@ REF AWBib1 \n \h
 
 ## 题注与句子移动
 
-- 原生题注结构为：`图`＋`SEQ 图 \* ARABIC`＋一个空格＋题注文字。
-- 书签范围只包含`图`和SEQ编号，不包含后面的空格、题注文字。
-- 正文使用`REF <bookmark> \h`，显示效果例如`如图3所示。`。其中`<bookmark>`应替换为实际书签名。
+- 当前保存的图题注偏好为：`图 `＋`SEQ 图 \* ARABIC`＋一个空格＋题注文字。
+- 书签范围只包含`图 `和SEQ编号，不包含后面的空格、题注文字。
+- 正文使用`REF <bookmark> \h`，显示效果例如`如图 3所示。`。其中`<bookmark>`应替换为实际书签名；引用结果字号跟随所在正文，而非题注。
 - 现有`_Ref...`书签用于维持引用关系，移动或润色题注时应保留。修改题注文字不代表可以重建整个段落。
-- `figures`只处理**尚未建立题注书签**的简单原生`SEQ 图`题注。遇到复杂对象或超链接时会拒绝处理。它不负责转换手打题注、处理表格题注、推测缺失题注，也不能判断图件与正文论述在含义上是否对应。
+- `figures`只处理**尚未建立题注书签**的简单原生`SEQ 图`题注，支持复杂域和`w:fldSimple`两种存储形式。遇到额外域、特殊SEQ开关、锁定域、复杂对象或超链接时拒绝处理。默认标签与编号间有空格；仅在用户要求无空格时使用`--label-separator none`。它不负责转换手打题注、处理表格题注、推测缺失题注，也不能判断图件与正文论述在含义上是否对应。
+- 不按书签前缀猜测题注类型。Word生成的`_Ref...`及用户命名的书签均可能指向题注，应核对范围中实际的SEQ域和标签编号。处理段落内域时必须限制查询范围，并拼接分散在多个`instrText`中的同一域代码。
 - `lead-sentence`在两个完全匹配的章节标题之间，将每个匹配段落的最后一句移到段首，并保留原有REF节点、文字片段格式及正文文字。如果短语重复、移动范围内有书签、句子已经位于段首，或匹配数量与预期不符，脚本会拒绝处理。使用前必须确认所选章节和短语。
 
 ## MathType与域
 
 检查`word/embeddings`、`word/media`、OLE的`ProgID`、域代码、关联关系及缓存的显示结果。嵌入文件逐字节未变，只能证明对象得到保留，不能证明已成功编辑MathType公式。
 
+- Word保存时可能重命名媒体文件或改变OLE的ObjectID。审计不能只靠文件名或ObjectID，应结合关联关系与实际载荷，核对内容和数量。现有`audit-assets`仅比较载荷及数量，不证明对象仍出现在原位置，也不检查完整关系图。
+- 格式修改应保留公式文字片段的`w:position`、基线、OLE尺寸及预览关联，不能为了统一字体清空整个`rPr`。公式上下被裁切时，检查固定行距和表格固定行高；只修复有关段落或行，不全篇重设。
+
 MathType公式编号可能包含嵌套且锁定的`SEQ MTEqn`域；文献管理软件使用ADDIN域。对整篇文档按F9、批量解锁域、将全部域转成文本，或覆盖整个段落，都可能破坏这些结构。`word_finalize.ps1`只更新明确选中的图题SEQ/REF域或AWBib REF域，不更新也不解锁MathType/ADDIN域。
 
 通过COM导出时，不应操作用户正在使用的Word实例。应单独启动Word，禁止宏自动运行，以只读方式处理输入文件，再通过SaveAs另存新路径。正常清理时不得使用taskkill强制结束进程。
+
+传给`Documents.Open`、`SaveAs2`和`ExportAsFixedFormat`的路径显式转为`[string]`，避免PowerShell路径包装对象引起COM参数绑定异常。脚本采用UTF-8，建议使用PowerShell 7（`pwsh`）；若在Windows PowerShell 5.1运行，先确保脚本为UTF-8 BOM，避免中文域名被误读。只读导出无需更新任何域。
 
 ## 命令示例
 
@@ -48,7 +54,7 @@ MathType公式编号可能包含嵌套且锁定的`SEQ MTEqn`域；文献管理�
 ```powershell
 python scripts/docx_ops.py inspect source.docx --report qa/source.json
 python scripts/docx_ops.py bibliography source.docx --output qa/numbered.docx --report qa/conversion.json
-powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/numbered.docx -OutputPath final.docx -PdfPath qa/final.pdf -ReportPath qa/fields.json -UpdateBibliography
+pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/numbered.docx -OutputPath final.docx -PdfPath qa/final.pdf -ReportPath qa/fields.json -UpdateBibliography
 python scripts/docx_ops.py audit-assets source.docx --compare final.docx
 python scripts/render_pdf.py qa/final.pdf qa/pages
 ```
@@ -66,26 +72,28 @@ python scripts/docx_ops.py lead-sentence source.docx --output moved.docx --start
 处理符合条件的简单题注：
 
 ```powershell
-python scripts/docx_ops.py figures source.docx --output qa/captions.docx
-powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/captions.docx -OutputPath final.docx -PdfPath qa/final.pdf -UpdateFigures
+python scripts/docx_ops.py figures source.docx --output qa/captions.docx --caption-size 14
+pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/captions.docx -OutputPath final.docx -PdfPath qa/final.pdf -UpdateFigures
 ```
+
+`--caption-size 14`指定四号题注，省略时保留原有字号。已有题注书签时不要重复运行`figures`；用范围明确的编辑保留其身份。`-UpdateFigures`先更新正文中的原生图/表SEQ，再更新书签内确有这些SEQ且只含标签编号的REF。可选`-FigureReferenceSize 12`统一这些引用结果为12 pt；只在正文的适用字号确为12 pt时使用，字号混合的正文应逐处匹配。无须更新的MathType和ADDIN域保持原样。
 
 如果只需只读渲染、不更新域，则不传入OutputPath和更新开关。文档渲染工具依赖LibreOffice而当前环境未安装时，可以在已安装Word的环境中使用以下替代方式：
 
 ```powershell
-powershell -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath qa/source.pdf
+pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath qa/source.pdf
 ```
 
 安装修改过的脚本前，执行以下测试：
 
 ```powershell
 python -m unittest discover -s scripts -p "test_*.py" -v
-powershell -NoProfile -File scripts/test_word_fields.ps1
+pwsh -NoProfile -File scripts/test_word_fields.ps1
 ```
 
 离线测试覆盖：文字分散在多个格式片段中的情况、区间引用、上标保留、域和OLE对象的保护边界、Word生成的分页标记、不覆盖已有文件、按需规范格式、简单题注，以及保留域的句子移动。
 
-实际Word测试会更改临时原生编号列表的起始编号，检查已有书签引用能否随之更新。两类测试都不能代替针对具体文档的渲染和视觉检查。COM脚本可核对原生列表编号及REF域的缓存显示结果，最终文档的科学内容仍需单独核验。
+实际Word测试会更改临时原生编号列表的起始编号，并通过`word_finalize.ps1`检查任意命名的题注书签、正文引用字号和锁定公式编号域。测试使用新建合成文档，保存在独立临时目录，也可用`-OutputDirectory`指定尚不存在的目录。两类测试都不能代替针对具体文档的渲染、MathType插件内部编辑和视觉检查。COM脚本可核对原生列表编号及REF域的缓存显示结果，最终文档的科学内容仍需单独核验。
 
 ## 必须另外检查的限制
 

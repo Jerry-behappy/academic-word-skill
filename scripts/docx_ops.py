@@ -8,7 +8,6 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from collections import Counter
 from copy import deepcopy
 import argparse
-import hashlib
 import json
 import re
 from lxml import etree as E
@@ -122,6 +121,21 @@ def fonts(rp, cn='宋体', latin='Times New Roman'):
     rf.set(W+'eastAsia',cn)
 
 
+def font_size(rp, points):
+    if points is None:return
+    require(points > 0 and points*2 == int(points*2),'Font size must be positive half-points')
+    # Preserve baseline/position and other run properties; update size only.
+    for tag in ['sz','szCs']:
+        node=rp.find(W+tag)
+        if node is None:
+            node=E.Element(W+tag)
+            later={'highlight','u','effect','bdr','shd','fitText','vertAlign','rtl','cs','em','lang','eastAsianLayout','specVanish','oMath','rPrChange'}
+            if tag=='sz':later.add('szCs')
+            at=next((i for i,c in enumerate(rp) if E.QName(c).localname in later),len(rp))
+            rp.insert(at,node)
+        node.set(W+'val',str(int(points*2)))
+
+
 def field_inventory(root):
     fields=[];stack=[]
     for e in root.iter():
@@ -132,8 +146,8 @@ def field_inventory(root):
             elif kind=='end' and stack:fields.append(stack.pop())
         elif e.tag==W+'instrText' and stack:stack[-1]['code']+=e.text or ''
         elif e.tag==W+'t' and stack and stack[-1]['show']:stack[-1]['result']+=e.text or ''
-    for f in root.xpath('//w:fldSimple',namespaces=NS):
-        fields.append({'code':f.get(W+'instr',''),'result':text(f),'simple':True})
+    for f in root.iter(W+'fldSimple'):
+        fields.append({'code':f.get(W+'instr',''),'result':text(f),'simple':True,'locked':f.get(W+'fldLock')})
     return fields
 
 
@@ -146,7 +160,8 @@ def inventory(parts):
 
 
 def assets(parts,prefix):
-    return Counter(hashlib.sha256(v).hexdigest() for k,v in parts.items() if k.startswith(prefix))
+    # Compare payloads, allowing Word to rename package members without false alarms.
+    return Counter(v for k,v in parts.items() if k.startswith(prefix))
 
 
 def audit_assets(before,after):
@@ -273,11 +288,16 @@ def bibliography(parts,root,heading):
     return {'references':len(refs),'native_numId':nid,'REF_fields_added':count,'citation_groups':len(groups),'first_appearance_order':first,'first_appearance_sequential':first==list(range(1,len(refs)+1))}
 
 
-def figures(root):
+def figures(root,label_separator=' ',caption_size=None):
+    require(label_separator in {'',' '},'Label separator must be empty or one space')
     captions=[];ps=root.xpath('//w:p',namespaces=NS)
     for p in ps:
-        code=''.join(p.xpath('.//w:instrText/text()',namespaces=NS))
-        if re.match(r'\s*SEQ\s+图(?:\s|$)',code):captions.append(p)
+        fs=field_inventory(p)
+        if any(re.match(r'\s*SEQ\s+图(?:\s|$)',f['code']) for f in fs):
+            require(len(fs)==1 and re.fullmatch(r'\s*SEQ\s+图(?:\s+\\\*\s+ARABIC)?\s*',fs[0]['code'],re.I),
+                    'Caption has extra fields or SEQ switches; requires targeted editing')
+            require(fs[0].get('locked') not in {'true','1','on'},'Caption field is locked')
+            captions.append(p)
     require(captions,'No native figure SEQ captions')
     require(not any(n.startswith('AWFig') for n in root.xpath('//w:bookmarkStart/@w:name',namespaces=NS)),'AWFig bookmarks already exist')
     require(not any(p.xpath('.//w:bookmarkStart|.//w:bookmarkEnd',namespaces=NS) for p in captions),'Caption bookmarks already exist; do not invalidate them')
@@ -288,11 +308,11 @@ def figures(root):
         n=int(m[1]);require(n not in mapping,'Duplicate figure number');mapping[n]=p
         rp=deepcopy(p.find('w:r/w:rPr',NS))
         if rp is None:rp=E.Element(W+'rPr')
-        fonts(rp)
+        fonts(rp);font_size(rp,caption_size)
         for c in list(p):
             if c.tag!=W+'pPr':p.remove(c)
         start=E.SubElement(p,W+'bookmarkStart');start.set(W+'id',str(bid));start.set(W+'name',f'AWFig{n}')
-        p.append(run('图',rp));p.extend(field('SEQ 图 \\* ARABIC',str(n),rp))
+        p.append(run('图'+label_separator,rp));p.extend(field('SEQ 图 \\* ARABIC',str(n),rp))
         end=E.SubElement(p,W+'bookmarkEnd');end.set(W+'id',str(bid));bid+=1
         p.append(run(' '+m[2],rp))
     count=0
@@ -301,14 +321,14 @@ def figures(root):
         s,_=stream(p)
         for m in reversed(list(re.finditer(r'图\s*(\d+)',s))):
             n=int(m[1]);require(n in mapping,'Missing figure caption')
-            replace_match(p,m.start(),m.end(),lambda rp,n=n:field(f'REF AWFig{n} \\h',f'图{n}',rp));count+=1
+            replace_match(p,m.start(),m.end(),lambda rp,n=n:field(f'REF AWFig{n} \\h',f'图{label_separator}{n}',rp));count+=1
     return {'captions':len(captions),'REF_fields_added':count}
 
 
 def normalize(root,args):
     counts={'spaces':0,'blank_paragraphs':0,'captions':0,'word_replacements':0}
     for p in list(root.xpath('//w:p',namespaces=NS)):
-        caption=bool(re.match(r'^图\d+ ',text(p)))
+        caption=bool(re.match(r'^图\s*\d+ ',text(p)))
         if args.boundary_spaces and not caption:
             s,_=stream(p)
             for m in reversed(list(BOUNDARY.finditer(s))):
@@ -331,12 +351,16 @@ def normalize(root,args):
                 rp=deepcopy(p.find('w:pPr/w:rPr',NS))
                 if rp is not None:q.find(W+'pPr').append(rp)
                 p.addnext(q);counts['blank_paragraphs']+=1
-        if args.caption_fonts and caption:
-            fonts(pprop(p,'rPr'))
-            for r in p.findall(W+'r'):
+        if (args.caption_fonts or getattr(args,'caption_size',None) is not None) and caption:
+            rp=pprop(p,'rPr')
+            if args.caption_fonts:fonts(rp)
+            font_size(rp,getattr(args,'caption_size',None))
+            for r in p.xpath('./w:r|./w:fldSimple/w:r',namespaces=NS):
+                if r.find(W+'object') is not None:continue
                 rp=r.find(W+'rPr')
                 if rp is None:rp=E.Element(W+'rPr');r.insert(0,rp)
-                fonts(rp)
+                if args.caption_fonts:fonts(rp)
+                font_size(rp,getattr(args,'caption_size',None))
             counts['captions']+=1
     return counts
 
@@ -386,8 +410,13 @@ def main():
     ap.add_argument('input',type=Path);ap.add_argument('--output',type=Path);ap.add_argument('--report',type=Path)
     ap.add_argument('--compare',type=Path);ap.add_argument('--heading',default='参考文献')
     ap.add_argument('--start-heading');ap.add_argument('--end-heading');ap.add_argument('--phrase');ap.add_argument('--expected-count',type=int)
+    ap.add_argument('--label-separator',choices=['space','none'],default='space',help='figures: space between label and number (default), or none')
+    ap.add_argument('--caption-size',type=float,help='figures/normalize: caption size in points; preserve when omitted')
     for flag in ['boundary-spaces','real-blank-lines','caption-fonts','adopt-wording']:ap.add_argument('--'+flag,action='store_true')
     args=ap.parse_args()
+    if args.caption_size is not None:
+        require(args.command in {'figures','normalize'},'--caption-size requires figures or normalize')
+        require(args.caption_size>0 and args.caption_size*2==int(args.caption_size*2),'Invalid caption size')
     if args.report:
         require(not args.report.exists(),'Refusing to overwrite report: '+str(args.report))
         require(args.report.resolve()!=args.input.resolve(),'Report must not overwrite input')
@@ -400,14 +429,13 @@ def main():
         require(args.output is not None,'--output required')
         require(args.input.resolve()!=args.output.resolve(),'Input must not be overwritten')
         require(not root.xpath('//w:ins|//w:del',namespaces=NS),'Tracked revisions present; obtain disposition before mutation')
-        if args.command=='normalize':require(any([args.boundary_spaces,args.real_blank_lines,args.caption_fonts,args.adopt_wording]),'Select at least one normalization flag')
+        if args.command=='normalize':require(any([args.boundary_spaces,args.real_blank_lines,args.caption_fonts,args.adopt_wording,args.caption_size is not None]),'Select at least one normalization flag')
         if args.command=='bibliography':report=bibliography(parts,root,args.heading)
-        elif args.command=='figures':report=figures(root)
+        elif args.command=='figures':report=figures(root,' ' if args.label_separator=='space' else '',args.caption_size)
         elif args.command=='lead-sentence':report=lead_sentence(root,args)
         else:report=normalize(root,args)
         parts['word/document.xml']=xml(root);report.update(audit_assets(before,parts));save(parts,args.output)
         report['output']=str(args.output)
-    report['source_sha256']=hashlib.sha256(args.input.read_bytes()).hexdigest()
     if args.report:
         args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
     print(json.dumps(report,ensure_ascii=False,indent=2))

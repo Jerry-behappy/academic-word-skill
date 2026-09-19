@@ -48,11 +48,11 @@ class DocumentTests(unittest.TestCase):
     def test_normalize_opt_in(self):
         root=E.Element(d.W+'document');p=E.SubElement(root,d.W+'p');p.append(d.run('中文 AMZI 与 2 个 English words，2 μm。借鉴'))
         d.pprop(p,'spacing').set(d.W+'afterLines','100')
-        cap=E.SubElement(root,d.W+'p');cap.append(d.run('图1 流程'))
+        cap=E.SubElement(root,d.W+'p');cap.append(d.run('图 1 流程'))
         args=argparse.Namespace(boundary_spaces=True,real_blank_lines=True,caption_fonts=True,adopt_wording=True)
         report=d.normalize(root,args)
         self.assertEqual(d.text(p),'中文AMZI与2个English words，2 μm。采用')
-        self.assertEqual(d.text(cap),'图1 流程');self.assertEqual(report['blank_paragraphs'],1)
+        self.assertEqual(d.text(cap),'图 1 流程');self.assertEqual(report['blank_paragraphs'],1)
         self.assertEqual(d.normalize(root,args)['blank_paragraphs'],0)
 
     def test_move_sentence_preserves_field(self):
@@ -70,8 +70,55 @@ class DocumentTests(unittest.TestCase):
         root=E.Element(d.W+'document');p=E.SubElement(root,d.W+'p');p.append(d.run('见图1。'))
         cap=E.SubElement(root,d.W+'p');cap.append(d.run('图'));cap.extend(d.field('SEQ 图 \\* ARABIC','1'));cap.append(d.run('流程'))
         self.assertEqual(d.figures(root)['REF_fields_added'],1)
-        self.assertEqual(d.text(cap),'图1 流程');self.assertEqual(d.text(p),'见图1。')
+        self.assertEqual(d.text(cap),'图 1 流程');self.assertEqual(d.text(p),'见图 1。')
         with self.assertRaises(ValueError):d.figures(root)
+
+    def test_field_inventory_scoped_and_split_code(self):
+        root=E.Element(d.W+'document');p=E.SubElement(root,d.W+'p');other=E.SubElement(root,d.W+'p')
+        f=E.SubElement(other,d.W+'fldSimple');f.set(d.W+'instr','SEQ 图');f.append(d.run('1'))
+        self.assertEqual(d.field_inventory(p),[])
+        p.extend(d.field('REF target \\h','图 1'))
+        t=p.find('.//w:instrText',d.NS);t.text=' REF '
+        r=d.run();E.SubElement(r,d.W+'instrText').text='target \\h ';p.insert(2,r)
+        self.assertEqual(d.field_inventory(p)[0]['code'],' REF target \\h ')
+        self.assertEqual(len(d.field_inventory(root)),2)
+
+    def test_simple_caption_and_body_size(self):
+        root=E.Element(d.W+'document');p=E.SubElement(root,d.W+'p')
+        rp=E.Element(d.W+'rPr');d.font_size(rp,12);p.append(d.run('见图1。',rp))
+        cap=E.SubElement(root,d.W+'p');cap.append(d.run('图'))
+        f=E.SubElement(cap,d.W+'fldSimple');f.set(d.W+'instr','SEQ 图 \\* ARABIC');f.append(d.run('1'))
+        cap.append(d.run(' 流程'))
+        d.figures(root,caption_size=14)
+        self.assertEqual(d.text(p),'见图 1。')
+        self.assertEqual(set(cap.xpath('./w:r/w:rPr/w:sz/@w:val',namespaces=d.NS)),{'28'})
+        self.assertEqual(set(p.xpath('./w:r/w:rPr/w:sz/@w:val',namespaces=d.NS)),{'24'})
+
+    def test_caption_fonts_preserve_position_and_field(self):
+        root=E.Element(d.W+'document');p=E.SubElement(root,d.W+'p');p.append(d.run('图 '))
+        f=E.SubElement(p,d.W+'fldSimple');f.set(d.W+'instr','SEQ 图');r=d.run('1');f.append(r)
+        rp=E.Element(d.W+'rPr');r.insert(0,rp);E.SubElement(rp,d.W+'position').set(d.W+'val','-2')
+        p.append(d.run(' 流程'))
+        before=d.field_inventory(p)
+        args=argparse.Namespace(boundary_spaces=True,real_blank_lines=False,caption_fonts=True,caption_size=14,adopt_wording=False)
+        d.normalize(root,args)
+        self.assertEqual(d.field_inventory(p),before)
+        self.assertEqual(d.text(p),'图 1 流程')
+        self.assertEqual(rp.find(d.W+'position').get(d.W+'val'),'-2')
+        self.assertEqual(rp.find(d.W+'sz').get(d.W+'val'),'28')
+        self.assertEqual(rp.find(d.W+'rFonts').get(d.W+'ascii'),'Times New Roman')
+
+    def test_custom_caption_sequence_rejected(self):
+        root=E.Element(d.W+'document');p=E.SubElement(root,d.W+'p');p.append(d.run('图'))
+        p.extend(d.field('SEQ 图 \\r 3','3'));p.append(d.run(' 流程'))
+        with self.assertRaises(ValueError):d.figures(root)
+
+    def test_assets_compare_content_not_names(self):
+        before={'word/embeddings/one.bin':b'ole','word/media/image1.png':b'image'}
+        after={'word/embeddings/two.bin':b'ole','word/media/image2.png':b'image'}
+        self.assertTrue(d.audit_assets(before,after))
+        after['word/media/image2.png']=b'changed'
+        with self.assertRaises(ValueError):d.audit_assets(before,after)
 
     def test_existing_output_refused(self):
         with tempfile.TemporaryDirectory() as td:
