@@ -88,6 +88,7 @@ Poppler不是上述pip命令的一部分。渲染前需确保`pdfinfo`和`pdftop
 | [references/chinese-format-profile.md](references/chinese-format-profile.md) | 可按需采用的中文学术排版偏好 |
 | [references/flowcharts.md](references/flowcharts.md) | 流程图箭头、间距、算法一致性和Word内分页检查 |
 | [scripts/docx_ops.py](scripts/docx_ops.py) | 检查、编号转换、题注处理、格式规范化、保留域的句子移动、对象审计 |
+| [scripts/format_figure_ref_phrases.py](scripts/format_figure_ref_phrases.py) | 定点设置“如图 x 所示”完整短语的字号，保留原生交叉引用域 |
 | [scripts/word_finalize.ps1](scripts/word_finalize.ps1) | Word COM选择性更新域、另存文档、导出PDF及编号核验 |
 | [scripts/render_pdf.py](scripts/render_pdf.py) | 将已有PDF输出为逐页PNG、总览图和页面清单 |
 | [scripts/test_docx_ops.py](scripts/test_docx_ops.py) | 离线结构与安全边界回归测试 |
@@ -123,7 +124,7 @@ pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath 
 
 #### 图题注与引用
 
-当前保存的个人偏好为`图 1 题注文字`，四号（14 pt）、中文宋体、英文及数字Times New Roman；正文仅引用`图 1`，字号跟随正文。用户最新要求或学校模板优先。
+当前保存的个人偏好为`图 1 题注文字`，四号（14 pt）、中文宋体、英文及数字Times New Roman。本用户的开题报告还要求正文完整短语`如图 1所示`为四号，而不只修改其中的图号；其他文档以其模板或用户要求为准。
 
 ```powershell
 python scripts/docx_ops.py figures source.docx --output qa/captions.docx --caption-size 14
@@ -131,6 +132,12 @@ pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/captions.docx -Out
 ```
 
 上述转换仅适用于尚无题注书签的简单原生SEQ题注。已有有效书签时不要重建，采用定点修改。`--label-separator none`可按需取消标签与编号之间的空格；`-FigureReferenceSize 12`仅在适用正文统一为12 pt时设置引用字号，否则逐处匹配。
+
+已核对交叉引用域后，可单独设置完整正文短语的字号；`--expected-count`须替换为当前文档的实际匹配数，输出使用新的文件名：
+
+```powershell
+python scripts/format_figure_ref_phrases.py source.docx --output figure-refs.docx --size-pt 14 --expected-count 23
+```
 
 保留域的句子移动及可选格式规范化，请参阅[详细说明](references/word-mechanics.md)，或运行`python scripts/docx_ops.py --help`。
 
@@ -244,6 +251,7 @@ Poppler is not included in this pip command. Before rendering, ensure that `pdfi
 | [references/chinese-format-profile.md](references/chinese-format-profile.md) | Optional Chinese academic formatting preferences |
 | [references/flowcharts.md](references/flowcharts.md) | Flowchart arrows, spacing, algorithm consistency, and pagination in Word |
 | [scripts/docx_ops.py](scripts/docx_ops.py) | Inspection, numbering conversion, caption handling, optional formatting, field-preserving sentence moves, and asset audits |
+| [scripts/format_figure_ref_phrases.py](scripts/format_figure_ref_phrases.py) | Set the size of complete “如图 x 所示” phrases while preserving native cross-reference fields |
 | [scripts/word_finalize.ps1](scripts/word_finalize.ps1) | Selective Word COM field updates, saving, PDF export, and numbering checks |
 | [scripts/render_pdf.py](scripts/render_pdf.py) | Render a PDF to page PNGs, overview sheets, and a page manifest |
 | [scripts/test_docx_ops.py](scripts/test_docx_ops.py) | Offline regression tests for document structures and safety boundaries |
@@ -283,7 +291,7 @@ pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath source.docx -PdfPath 
 
 #### Figure captions and cross-references
 
-The saved personal preference is `图 1 题注文字`: a space between the label and number, and another before the caption text. Captions use 14 pt (Chinese “四号”), SimSun for Chinese, and Times New Roman for Latin letters and digits. Body references show only `图 1` and match the surrounding body font size. The user's latest requirements or institutional template take precedence.
+The saved personal preference is `图 1 题注文字`: a space between the label and number, and another before the caption text. Captions use 14 pt (Chinese “四号”), SimSun for Chinese, and Times New Roman for Latin letters and digits. In this user's proposal, the complete body phrase `如图 1所示` also uses 14 pt, not just its figure number. Other documents follow their own template or user instructions.
 
 ```powershell
 python scripts/docx_ops.py figures source.docx --output qa/captions.docx --caption-size 14
@@ -291,6 +299,12 @@ pwsh -NoProfile -File scripts/word_finalize.ps1 -InputPath qa/captions.docx -Out
 ```
 
 This conversion supports only simple native `SEQ` figure captions without existing caption bookmarks. Preserve valid existing bookmarks and use targeted edits instead of rebuilding them. Use `--label-separator none` only when no space is wanted between the label and number. Use `-FigureReferenceSize 12` only when the applicable body text is uniformly 12 pt; otherwise match each reference to its surrounding text.
+
+After checking the native cross-reference fields, the complete body phrases can be formatted separately. Replace the example count with the actual number of matches and use a new output path:
+
+```powershell
+python scripts/format_figure_ref_phrases.py source.docx --output figure-refs.docx --size-pt 14 --expected-count 23
+```
 
 For field-preserving sentence moves and optional formatting, see the [detailed guide](references/word-mechanics.md) or run `python scripts/docx_ops.py --help`.
 
